@@ -207,7 +207,7 @@ import Graphics.Text.TrueType( Font
 --
 withTexture :: Texture px -> Drawing px () -> Drawing px ()
 withTexture texture subActions =
-    liftF $ SetTexture texture subActions ()
+    liftF (SetTexture texture subActions, ())
 
 -- | Will render the whole subaction with a given group opacity, after
 -- each element has been rendered. That means that completly opaque
@@ -238,12 +238,12 @@ withTexture texture subActions =
 --
 -- <<docimages/item_opacity.png>>
 withGroupOpacity :: PixelBaseComponent px -> Drawing px ()-> Drawing px ()
-withGroupOpacity opa sub = liftF $ WithGlobalOpacity opa sub ()
+withGroupOpacity opa sub = liftF (WithGlobalOpacity opa sub, ())
 
 -- | Draw all the sub drawing commands using a transformation.
 withTransformation :: Transformation -> Drawing px () -> Drawing px ()
 withTransformation trans sub =
-    liftF $ WithTransform trans sub ()
+    liftF (WithTransform trans sub, ())
 
 -- | This command allows you to draw primitives on a given curve,
 -- for example, you can draw text on a curve:
@@ -282,7 +282,7 @@ withPathOrientation :: Path            -- ^ Path directing the orientation.
                     -> Drawing px ()   -- ^ The sub drawings.
                     -> Drawing px ()
 withPathOrientation path p sub =
-    liftF $ WithPathOrientation path p sub ()
+    liftF (WithPathOrientation path p sub, ())
 
 -- | Fill some geometry. The geometry should be "looping",
 -- ie. the last point of the last primitive should
@@ -295,7 +295,7 @@ withPathOrientation path p sub =
 -- <<docimages/fill_circle.png>>
 --
 fill :: Geometry geom => geom -> Drawing px ()
-fill prims = liftF $ Fill FillWinding (toPrimitives prims) ()
+fill prims = liftF (Fill FillWinding (toPrimitives prims), ())
 
 -- | This function let you choose how to fill the primitives
 -- in case of self intersection. See `FillMethod` documentation
@@ -303,7 +303,7 @@ fill prims = liftF $ Fill FillWinding (toPrimitives prims) ()
 fillWithMethod :: Geometry geom
                => FillMethod -> geom -> Drawing px ()
 fillWithMethod method prims =
-    liftF $ Fill method (toPrimitives prims) ()
+    liftF (Fill method (toPrimitives prims), ())
 
 -- | Draw some geometry using a clipping path.
 --
@@ -320,7 +320,7 @@ withClipping
     -> Drawing px () -- ^ The actual geometry to clip
     -> Drawing px ()
 withClipping clipPath drawing =
-    liftF $ WithCliping clipPath drawing ()
+    liftF (WithCliping clipPath drawing, ())
 
 -- | Will stroke geometry with a given stroke width.
 -- The elements should be connected
@@ -336,7 +336,7 @@ stroke :: (Geometry geom)
        -> geom        -- ^ List of elements to render
        -> Drawing px ()
 stroke width join caping prims =
-    liftF $ Stroke width join caping (toPrimitives prims) ()
+    liftF (Stroke width join caping (toPrimitives prims), ())
 
 -- | Draw a string at a given position.
 -- Text printing imply loading a font, there is no default
@@ -370,7 +370,7 @@ printTextAt :: Font            -- ^ Drawing font
             -> String          -- ^ String to print
             -> Drawing px ()
 printTextAt font pointSize point string =
-    liftF $ TextFill point [description] ()
+    liftF (TextFill point [description], ())
   where
     description = TextRange
         { _textFont    = font
@@ -382,7 +382,7 @@ printTextAt font pointSize point string =
 -- | Render a mesh patch as an object. Warning, there is
 -- no antialiasing on mesh patch objects!
 renderMeshPatch :: PatchInterpolation -> MeshPatch px -> Drawing px ()
-renderMeshPatch i mesh = liftF $ MeshPatchRender i mesh ()
+renderMeshPatch i mesh = liftF (MeshPatchRender i mesh, ())
 
 -- | Print complex text, using different texture font and
 -- point size for different parts of the text.
@@ -401,7 +401,7 @@ renderMeshPatch i mesh = liftF $ MeshPatchRender i mesh ()
 printTextRanges :: Point            -- ^ Starting point of the base line
                 -> [TextRange px]   -- ^ Ranges description to be printed
                 -> Drawing px ()
-printTextRanges point ranges = liftF $ TextFill point ranges ()
+printTextRanges point ranges = liftF (TextFill point ranges, ())
 
 data RenderContext px = RenderContext
     { currentClip           :: Maybe (Texture (PixelBaseComponent px))
@@ -575,18 +575,18 @@ drawOrdersOfDrawing width height dpi background drawing =
     stupidDefaultTexture =
         SolidTexture $ colorMap (const clipBackground) background
 
-    go :: RenderContext px -> Free (DrawCommand px) () -> [DrawOrder px]
+    go :: RenderContext px -> Free ((,) (DrawCommand px)) () -> [DrawOrder px]
        -> [DrawOrder px]
     go _ (Pure ()) rest = rest
-    go ctxt (Free (WithGlobalOpacity opa sub next)) rest =
-        go ctxt (Free (WithImageEffect opacifier sub next)) rest
+    go ctxt (Free (WithGlobalOpacity opa sub, next)) rest =
+        go ctxt (Free (WithImageEffect opacifier sub, next)) rest
       where 
         -- Todo: a colorMapWithAlpha is really needed in JP API.
         opacifier _ _ _ px = mixWithAlpha ignore alphaModulate px px
         ignore _ _ a = a
         alphaModulate _ v = opa `modulate` v
 
-    go ctxt (Free (WithImageEffect effect sub next)) rest =
+    go ctxt (Free (WithImageEffect effect sub, next)) rest =
         go freeContext (fromF cached) after
       where
         cached = cacheOrders (Just effect) $ go ctxt (fromF sub) []
@@ -594,7 +594,7 @@ drawOrdersOfDrawing width height dpi background drawing =
         freeContext = ctxt { currentClip = Nothing, currentTransformation = Nothing }
 
 
-    go ctxt (Free (WithPathOrientation path base sub next)) rest = final where
+    go ctxt (Free (WithPathOrientation path base sub, next)) rest = final where
       final = orders <> go ctxt next rest
       images = go ctxt (fromF sub) []
 
@@ -603,7 +603,7 @@ drawOrdersOfDrawing width height dpi background drawing =
 
       orders = reverse $ execState (drawOrdersOnPath drawer 0 base path images) []
 
-    go ctxt (Free (WithTransform trans sub next)) rest = final where
+    go ctxt (Free (WithTransform trans sub, next)) rest = final where
       trans'
         | Just (t, _) <- currentTransformation ctxt = t <> trans
         | otherwise = trans
@@ -614,7 +614,7 @@ drawOrdersOfDrawing width height dpi background drawing =
 
       final = go subContext (fromF sub) after
 
-    go ctxt (Free (CustomRender cust next)) rest = order : after where
+    go ctxt (Free (CustomRender cust, next)) rest = order : after where
       after = go ctxt next rest
       order = DrawOrder 
             { _orderPrimitives = []
@@ -624,7 +624,7 @@ drawOrdersOfDrawing width height dpi background drawing =
             , _orderDirect     = cust
             }
 
-    go ctxt (Free (MeshPatchRender i mesh next)) rest = order : after where
+    go ctxt (Free (MeshPatchRender i mesh, next)) rest = order : after where
       after = go ctxt next rest
       rendering :: DrawContext (ST s) px ()
       rendering = case i of
@@ -668,7 +668,7 @@ drawOrdersOfDrawing width height dpi background drawing =
             , _orderDirect     = return ()
             }
 
-    go ctxt (Free (Fill method prims next)) rest = order : after where
+    go ctxt (Free (Fill method prims, next)) rest = order : after where
       after = go ctxt next rest
       order = DrawOrder 
             { _orderPrimitives = [geometryOf ctxt prims]
@@ -678,26 +678,26 @@ drawOrdersOfDrawing width height dpi background drawing =
             , _orderDirect     = return ()
             }
 
-    go ctxt (Free (Stroke w j cap prims next)) rest =
-        go ctxt (Free $ Fill FillWinding prim' next) rest
+    go ctxt (Free (Stroke w j cap prims, next)) rest =
+        go ctxt (Free (Fill FillWinding prim', next)) rest
             where prim' = listOfContainer $ strokize w j cap prims
 
-    go ctxt (Free (SetTexture tx sub next)) rest =
+    go ctxt (Free (SetTexture tx sub, next)) rest =
         go (ctxt { currentTexture = tx }) (fromF sub) $
             go ctxt next rest
 
-    go ctxt (Free (DashedStroke o d w j cap prims next)) rest =
+    go ctxt (Free (DashedStroke o d w j cap prims, next)) rest =
         foldr recurse after $ dashedStrokize o d w j cap prims
       where
         after = go ctxt next rest
         recurse sub =
-            go ctxt (liftF $ Fill FillWinding sub ())
+            go ctxt (liftF (Fill FillWinding sub, ()))
 
-    go ctxt (Free (TextFill p descriptions next)) rest = calls <> go ctxt next rest where
+    go ctxt (Free (TextFill p descriptions, next)) rest = calls <> go ctxt next rest where
       calls =
         geometryOfO ctxt <$> textToDrawOrders dpi (currentTexture ctxt) p descriptions
 
-    go ctxt (Free (WithCliping clipPath path next)) rest =
+    go ctxt (Free (WithCliping clipPath path, next)) rest =
         go (ctxt { currentClip = newModuler }) (fromF path) $
             go ctxt next rest
       where
@@ -749,7 +749,7 @@ dashedStrokeWithOffset
 dashedStrokeWithOffset _ [] width join caping prims =
     stroke width join caping prims
 dashedStrokeWithOffset offset dashing width join caping prims =
-    liftF $ DashedStroke offset dashing width join caping (toPrimitives prims) ()
+    liftF (DashedStroke offset dashing width join caping (toPrimitives prims), ())
 
 -- | Generate a strokable line out of points list.
 -- Just an helper around `lineFromPath`.

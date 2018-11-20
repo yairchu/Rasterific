@@ -427,7 +427,7 @@ midCurve (CubicBezier a b c d) (CubicBezier d' c' b' a') =
 -- | Draw the 4 bezier spline representing the boundary of a coon patch.
 drawCoonPatchOutline :: CoonPatch px -> Drawing pxb ()
 drawCoonPatchOutline CoonPatch { .. } =
-  liftF $ Stroke 2 JoinRound (CapRound, CapRound) prims ()
+  liftF (Stroke 2 JoinRound (CapRound, CapRound) prims, ())
   where
     prims = toPrimitives [_north, _east, _south, _west]
 
@@ -465,9 +465,9 @@ defaultDebug = DebugOption
 debugDrawCoonPatch :: DebugOption -> CoonPatch (ParametricValues PixelRGBA8)
                    -> Drawing PixelRGBA8 ()
 debugDrawCoonPatch DebugOption { .. } patch@(CoonPatch { .. }) = do
-  let stroker v = liftF $ Stroke 2 JoinRound (CapRound, CapRound) v ()
-      fill sub = liftF $ Fill FillWinding sub ()
-      setColor' c inner = liftF $ SetTexture (SolidTexture c) inner ()
+  let stroker v = liftF (Stroke 2 JoinRound (CapRound, CapRound) v, ())
+      fill sub = liftF (Fill FillWinding sub, ())
+      setColor' c inner = liftF (SetTexture (SolidTexture c) inner, ())
   when _drawOutline $
     setColor' _outlineColor (drawCoonPatchOutline patch)
 
@@ -492,9 +492,9 @@ debugDrawCoonPatch DebugOption { .. } patch@(CoonPatch { .. }) = do
 debugDrawTensorPatch :: DebugOption -> TensorPatch (ParametricValues px)
                      -> Drawing PixelRGBA8 ()
 debugDrawTensorPatch DebugOption { .. } p = do
-  let stroker v = liftF $ Stroke 2 JoinRound (CapRound, CapRound) v ()
+  let stroker v = liftF (Stroke 2 JoinRound (CapRound, CapRound) v, ())
       setColor' c inner =
-          liftF $ SetTexture (SolidTexture c) inner ()
+          liftF (SetTexture (SolidTexture c) inner, ())
       p' = transposePatch p
 
   when _drawOutline $

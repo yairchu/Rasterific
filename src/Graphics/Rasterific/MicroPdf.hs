@@ -895,8 +895,10 @@ textureToPdf rootTrans inner = go rootTrans SamplerPad where
           baseTexture = SolidTexture px
           backRect = rectangle (V2 0 0) (fromIntegral w) (fromIntegral h)
           backDraw =
-            liftF $ SetTexture baseTexture
-               (liftF $ Fill FillWinding backRect ()) ()
+            liftF
+                ( SetTexture baseTexture (liftF (Fill FillWinding backRect, ()))
+                , ()
+                )
       (content, resId) <-
           local withPatternSize . withLocalSubcontext $ pdfProducer baseTexture (backDraw >> draw)
       tillingId <- generateObject $ tillingPattern rootTrans w h (content) resId
@@ -1035,7 +1037,7 @@ pdfProducer baseTexture draw = do
 
   goNext :: forall px. PdfBaseColorable px
          => Bool -> Transformation -> (FillMethod -> Builder) -> Texture px
-         -> Free (DrawCommand px) ()
+         -> Free ((,) (DrawCommand px)) ()
          -> PdfEnv Builder
   goNext forceInverse activeTrans filler prevTexture f = case f of
     Free c -> go forceInverse activeTrans filler prevTexture c
@@ -1043,23 +1045,23 @@ pdfProducer baseTexture draw = do
 
   go :: forall px. PdfBaseColorable px
      => Bool -> Transformation -> (FillMethod -> Builder) -> Texture px
-     -> DrawCommand px (Free (DrawCommand px) ()) -> PdfEnv Builder
+     -> (DrawCommand px, (Free ((,) (DrawCommand px)) ())) -> PdfEnv Builder
   go forceInverse activeTrans filler prevTexture com = case com of
-     CustomRender _mesh next -> recurse next
-     MeshPatchRender i m next -> do
+     (CustomRender _mesh, next) -> recurse next
+     (MeshPatchRender i m, next) -> do
        w <- asks $ fromIntegral . _pdfWidth
        h <- asks $ fromIntegral . _pdfHeight
        let rect = rectangle (V2 0 0) w h
-       go forceInverse activeTrans filler prevTexture $
-         SetTexture (MeshPatchTexture i m) (liftF $ Fill FillWinding rect ()) next
+       go forceInverse activeTrans filler prevTexture
+         (SetTexture (MeshPatchTexture i m) (liftF (Fill FillWinding rect, ())), next)
            
-     Fill method prims next -> do
+     (Fill method prims, next) -> do
        after <- recurse next
        pure $ foldMap pathToPdf (resplit prims)
             <> filler method
             <> after
 
-     Stroke w j (c, _) prims next -> do
+     (Stroke w j (c, _) prims, next) -> do
        after <- recurse next
        let output p = pathToPdf p <> reClose p
            stroke = case w of
@@ -1071,8 +1073,8 @@ pdfProducer baseTexture draw = do
                           <> tp "S\n"
        pure $ stroke <> after
      
-     DashedStroke o pat w j (c, _) prims next -> do
-       sub <- go forceInverse activeTrans filler prevTexture $ Stroke w j (c, c) prims (Pure ())
+     (DashedStroke o pat w j (c, _) prims, next) -> do
+       sub <- go forceInverse activeTrans filler prevTexture (Stroke w j (c, c) prims, Pure ())
        after <- recurse next
        pure $ arrayOf (foldMap coords pat) 
            <> toPdf o <> tp " d "
@@ -1083,32 +1085,32 @@ pdfProducer baseTexture draw = do
          coords co = toPdf co <> tp " "
      
      -- Opacity is ignored for now
-     WithGlobalOpacity opacity sub next | opacity >= fullValue ->
+     (WithGlobalOpacity opacity sub, next) | opacity >= fullValue ->
        (<>) <$> recurse (fromF sub) <*> recurse next
-     WithGlobalOpacity opacity sub next -> do
+     (WithGlobalOpacity opacity sub, next) -> do
        inner <- withLocalSubcontext . recurse $ fromF sub
        after <- recurse next
        let alpha = opacityToPdf opacity
            proxy = Proxy :: Proxy px
        (<> after) <$> alphaLayerGenerator proxy inner alpha
 
-     WithImageEffect _f sub next ->
+     (WithImageEffect _f sub, next) ->
        (<>) <$> recurse (fromF sub) <*> recurse next
 
-     WithTransform trans sub next | forceInverse -> do
+     (WithTransform trans sub, next) | forceInverse -> do
         after <- recurse next
         let subTrans = (activeTrans <> trans)
         inner <- goNext forceInverse subTrans filler prevTexture $ fromF sub
         let inv = foldMap toPdf $ inverseTransformation trans
         pure $ toPdf trans <> inner <> inv <> after
 
-     WithTransform trans sub next -> do
+     (WithTransform trans sub, next) -> do
         after <- recurse next
         let subTrans = activeTrans <> trans
         inner <- goNext forceInverse subTrans filler prevTexture $ fromF sub
         pure $ localGraphicState (toPdf trans <> inner) <> after
 
-     SetTexture tx sub next -> do
+     (SetTexture tx sub, next) -> do
         innerCode <- goNext forceInverse activeTrans filler tx $ fromF sub
         after <- recurse next
         tex <- textureToPdf activeTrans innerCode tx
@@ -1116,7 +1118,7 @@ pdfProducer baseTexture draw = do
            Left _ -> innerCode <> after
            Right texCode -> localGraphicState texCode <> after
 
-     WithCliping clipping sub next -> do
+     (WithCliping clipping sub, next) -> do
         after <- recurse next
         let draw8 = clipping :: Drawing px ()
             localClip | forceInverse = id
@@ -1126,20 +1128,20 @@ pdfProducer baseTexture draw = do
         pure $ localClip (clipPath <> tp "\n" <> drawing)
             <> after
 
-     TextFill p ranges next -> do
+     (TextFill p ranges, next) -> do
         dpi <- asks _pdfConfDpi
         after <- recurse next
         let orders = textToDrawOrders dpi prevTexture p ranges
         textPrint <- mapM (orderToPdf activeTrans) orders
         pure $ F.fold textPrint <> after
 
-     WithPathOrientation path base subDrawings next -> do
+     (WithPathOrientation path base subDrawings, next) -> do
        toOrders <- asks _pdfConfToOrder
        let orders :: [DrawOrder px]
-           orders = toOrders . liftF $ SetTexture prevTexture subDrawings ()
+           orders = toOrders $ liftF (SetTexture prevTexture subDrawings, ())
 
            drawer trans _ order =
-             modify (liftF (WithTransform trans (orderToDrawing order) ()) :)
+             modify (liftF (WithTransform trans (orderToDrawing order), ()) :)
 
            placedDrawings :: [Drawing px ()]
            placedDrawings =

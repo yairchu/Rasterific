@@ -31,7 +31,7 @@ import Graphics.Rasterific.PatchTypes
 import Graphics.Text.TrueType( Font, PointSize )
 
 -- | Monad used to record the drawing actions.
-type Drawing px = F (DrawCommand px)
+type Drawing px = F ((,) (DrawCommand px))
 
 -- | Monad used to describe the drawing context.
 type DrawContext m px =
@@ -78,21 +78,19 @@ data Texture (px :: *)
   | MeshPatchTexture !PatchInterpolation !(MeshPatch px)
 
 
-data DrawCommand px next
-  = Fill FillMethod [Primitive] next
-  | CustomRender (forall s. DrawContext (ST s) px ()) next
-  | MeshPatchRender !PatchInterpolation (MeshPatch px) next
-  | Stroke Float Join (Cap, Cap) [Primitive] next
-  | DashedStroke Float DashPattern Float Join (Cap, Cap) [Primitive] next
-  | TextFill Point [TextRange px] next
-  | SetTexture (Texture px)
-               (Drawing px ()) next
-  | WithGlobalOpacity (PixelBaseComponent px) (Drawing px ()) next
-  | WithImageEffect (Image px -> ImageTransformer px) (Drawing px ()) next
-  | WithCliping (forall innerPixel. Drawing innerPixel ())
-                (Drawing px ()) next
-  | WithTransform Transformation (Drawing px ()) next
-  | WithPathOrientation Path Float (Drawing px ()) next
+data DrawCommand px
+  = Fill FillMethod [Primitive]
+  | CustomRender (forall s. DrawContext (ST s) px ())
+  | MeshPatchRender !PatchInterpolation (MeshPatch px)
+  | Stroke Float Join (Cap, Cap) [Primitive]
+  | DashedStroke Float DashPattern Float Join (Cap, Cap) [Primitive]
+  | TextFill Point [TextRange px]
+  | SetTexture (Texture px) (Drawing px ())
+  | WithGlobalOpacity (PixelBaseComponent px) (Drawing px ())
+  | WithImageEffect (Image px -> ImageTransformer px) (Drawing px ())
+  | WithCliping (forall innerPixel. Drawing innerPixel ()) (Drawing px ())
+  | WithTransform Transformation (Drawing px ())
+  | WithPathOrientation Path Float (Drawing px ())
 
 -- | This function will spit out drawing instructions to
 -- help debugging.
@@ -112,29 +110,29 @@ dumpDrawing = go . fromF where
         , PixelBaseComponent (PixelBaseComponent px)
                     ~ (PixelBaseComponent px)
 
-        ) => Free (DrawCommand px) () -> String
+        ) => Free ((,) (DrawCommand px)) () -> String
   go (Pure ()) = "return ()"
-  go (Free (MeshPatchRender i m next)) =
+  go (Free (MeshPatchRender i m, next)) =
     "renderMeshPatch (" ++ show i ++ ") (" ++ show m ++ ") >>= " ++ go next
-  go (Free (CustomRender _r next)) =
+  go (Free (CustomRender _r, next)) =
     "customRender _ >>= " ++ go next
-  go (Free (WithImageEffect _effect sub next)) =
+  go (Free (WithImageEffect _effect sub, next)) =
     "withImageEffect ({- fun -}) (" ++ go (fromF sub) ++ ") >>= " ++ go next
-  go (Free (WithGlobalOpacity opa sub next)) =
+  go (Free (WithGlobalOpacity opa sub, next)) =
     "withGlobalOpacity " ++ show opa ++ " (" ++ go (fromF sub) ++ ") >>= " ++ go next
-  go (Free (WithPathOrientation path point drawing next)) =
+  go (Free (WithPathOrientation path point drawing, next)) =
     "withPathOrientation (" ++ show path ++ ") ("
                             ++ show point ++ ") ("
                             ++ go (fromF drawing) ++ ") >>= "
                             ++ go next
-  go (Free (Fill _ prims next)) =
+  go (Free (Fill _ prims, next)) =
     "fill " ++ show prims ++ " >>=\n" ++   go next
-  go (Free (TextFill _ texts next)) =
+  go (Free (TextFill _ texts, next)) =
    concat  ["-- Text : " ++ _text t ++ "\n" | t <- texts] ++ go next
-  go (Free (SetTexture tx drawing next)) =
+  go (Free (SetTexture tx drawing, next)) =
     "withTexture (" ++ dumpTexture tx ++ ") (" ++
               go (fromF drawing) ++ ") >>=\n" ++ go next
-  go (Free (DashedStroke o pat w j cap prims next)) =
+  go (Free (DashedStroke o pat w j cap prims, next)) =
     "dashedStrokeWithOffset "
               ++ show o ++ " "
               ++ show pat ++ " "
@@ -142,23 +140,23 @@ dumpDrawing = go . fromF where
               ++ show j ++ ") "
               ++ show cap ++ " "
               ++ show prims ++ " >>=\n" ++   go next
-  go (Free (Stroke w j cap prims next)) =
+  go (Free (Stroke w j cap prims, next)) =
     "stroke " ++ show w ++ " ("
               ++ show j ++ ") "
               ++ show cap ++ " "
               ++ show prims ++ " >>=\n" ++   go next
-  go (Free (WithTransform trans sub next)) =
+  go (Free (WithTransform trans sub, next)) =
     "withTransform (" ++ show trans ++ ") ("
                       ++ go (fromF sub) ++ ") >>=\n "
                       ++ go next
-  go (Free (WithCliping clipping draw next)) =
+  go (Free (WithCliping clipping draw, next)) =
     "withClipping (" ++ go (fromF $ withTexture clipTexture clipping)
                      ++ ")\n" ++
         "         (" ++ go (fromF draw) ++ ")\n >>= " ++
               go next
         where clipTexture = SolidTexture (0xFF :: Pixel8)
               withTexture texture subActions =
-                 liftF $ SetTexture texture subActions ()
+                 liftF (SetTexture texture subActions, ())
 
 dumpTexture :: ( Show px
                , Show (PixelBaseComponent px)
@@ -191,30 +189,6 @@ dumpTexture (PatternTexture w h px sub _) =
     "patternTexture " ++ show w ++ " " ++ show h ++ " " ++ show px
                       ++ " (" ++ dumpDrawing sub ++ ")"
 
-
-instance Functor (DrawCommand px) where
-    fmap f (WithImageEffect effect sub next) =
-        WithImageEffect effect sub $ f next
-    fmap f (TextFill pos texts next) =
-        TextFill pos texts $ f next
-    fmap f (CustomRender m next) =
-        CustomRender m $ f next
-    fmap f (WithGlobalOpacity opa sub next) =
-        WithGlobalOpacity opa sub $ f next
-    fmap f (Fill method  prims next) = Fill method prims $ f next
-    fmap f (SetTexture t sub next) = SetTexture t sub $ f next
-    fmap f (WithCliping sub com next) =
-        WithCliping sub com $ f next
-    fmap f (Stroke w j caps prims next) =
-        Stroke w j caps prims $ f next
-    fmap f (DashedStroke st pat w j caps prims next) =
-        DashedStroke st pat w j caps prims $ f next
-    fmap f (WithTransform trans draw next) =
-        WithTransform trans draw $ f next
-    fmap f (WithPathOrientation path point draw next) =
-        WithPathOrientation path point draw $ f next
-    fmap f (MeshPatchRender i mesh next) =
-        MeshPatchRender i mesh $ f next
 
 instance Semigroup (Drawing px ()) where
     (<>) a b = a >> b

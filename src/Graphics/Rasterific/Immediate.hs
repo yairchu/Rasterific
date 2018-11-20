@@ -103,9 +103,9 @@ orderToDrawing order =
   usingTexture . mapM_ filler $ _orderPrimitives order
     where
       usingTexture sub =
-          liftF $ SetTexture (_orderTexture order) sub ()
+          liftF (SetTexture (_orderTexture order) sub, ())
       filler prims =
-          liftF $ Fill (_orderFillMethod order) prims ()
+          liftF (Fill (_orderFillMethod order) prims, ())
 
 -- | Render the drawing orders on the canvas.
 fillOrder :: (PrimMonad m, RenderablePixel px)
